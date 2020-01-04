@@ -32,15 +32,15 @@ from absl import flags
 import tensorflow as tf
 # pylint: enable=g-bad-import-order
 
+from official.nlp.transformer import model_params
 from official.r1.utils import export
 from official.r1.utils import tpu as tpu_util
+from official.r1.transformer import translate
+from official.r1.transformer import transformer
+from official.r1.transformer import dataset
+from official.r1.transformer import schedule
 from official.transformer import compute_bleu
-from official.transformer import translate
-from official.transformer.model import model_params
-from official.transformer.model import transformer
-from official.transformer.utils import dataset
 from official.transformer.utils import metrics
-from official.transformer.utils import schedule
 from official.transformer.utils import tokenizer
 from official.utils.flags import core as flags_core
 from official.utils.logs import hooks_helper
@@ -115,8 +115,10 @@ def model_fn(features, labels, mode, params):
         metric_fn = lambda logits, labels: (
             metrics.get_eval_metrics(logits, labels, params=params))
         eval_metrics = (metric_fn, [logits, labels])
-        return tf.contrib.tpu.TPUEstimatorSpec(
-            mode=mode, loss=loss, predictions={"predictions": logits},
+        return tf.estimator.tpu.TPUEstimatorSpec(
+            mode=mode,
+            loss=loss,
+            predictions={"predictions": logits},
             eval_metrics=eval_metrics)
       return tf.estimator.EstimatorSpec(
           mode=mode, loss=loss, predictions={"predictions": logits},
@@ -128,12 +130,14 @@ def model_fn(features, labels, mode, params):
       # in TensorBoard.
       metric_dict["minibatch_loss"] = loss
       if params["use_tpu"]:
-        return tf.contrib.tpu.TPUEstimatorSpec(
-            mode=mode, loss=loss, train_op=train_op,
+        return tf.estimator.tpu.TPUEstimatorSpec(
+            mode=mode,
+            loss=loss,
+            train_op=train_op,
             host_call=tpu_util.construct_scalar_host_call(
-                metric_dict=metric_dict, model_dir=params["model_dir"],
-                prefix="training/")
-        )
+                metric_dict=metric_dict,
+                model_dir=params["model_dir"],
+                prefix="training/"))
       record_scalars(metric_dict)
       return tf.estimator.EstimatorSpec(mode=mode, loss=loss, train_op=train_op)
 
@@ -173,14 +177,15 @@ def get_train_op_and_metrics(loss, params):
 
     # Create optimizer. Use LazyAdamOptimizer from TF contrib, which is faster
     # than the TF core Adam optimizer.
-    optimizer = tf.contrib.opt.LazyAdamOptimizer(
+    from tensorflow.contrib import opt as contrib_opt  # pylint: disable=g-import-not-at-top
+    optimizer = contrib_opt.LazyAdamOptimizer(
         learning_rate,
         beta1=params["optimizer_adam_beta1"],
         beta2=params["optimizer_adam_beta2"],
         epsilon=params["optimizer_adam_epsilon"])
 
     if params["use_tpu"] and params["tpu"] != tpu_util.LOCAL:
-      optimizer = tf.contrib.tpu.CrossShardOptimizer(optimizer)
+      optimizer = tf.compat.v1.tpu.CrossShardOptimizer(optimizer)
 
     # Uses automatic mixed precision FP16 training if on GPU.
     if params["dtype"] == "fp16":
@@ -342,6 +347,7 @@ def run_loop(
         steps=schedule_manager.single_iteration_train_steps,
         hooks=train_hooks)
 
+    eval_results = None
     eval_results = estimator.evaluate(
         input_fn=dataset.eval_input_fn,
         steps=schedule_manager.single_iteration_eval_steps)
@@ -528,31 +534,32 @@ def construct_estimator(flags_obj, params, schedule_manager):
         model_fn=model_fn, model_dir=flags_obj.model_dir, params=params,
         config=tf.estimator.RunConfig(train_distribute=distribution_strategy))
 
-  tpu_cluster_resolver = tf.contrib.cluster_resolver.TPUClusterResolver(
+  tpu_cluster_resolver = tf.compat.v1.cluster_resolver.TPUClusterResolver(
       tpu=flags_obj.tpu,
       zone=flags_obj.tpu_zone,
       project=flags_obj.tpu_gcp_project
   )
 
-  tpu_config = tf.contrib.tpu.TPUConfig(
+  tpu_config = tf.estimator.tpu.TPUConfig(
       iterations_per_loop=schedule_manager.single_iteration_train_steps,
       num_shards=flags_obj.num_tpu_shards)
 
-  run_config = tf.contrib.tpu.RunConfig(
+  run_config = tf.estimator.tpu.RunConfig(
       cluster=tpu_cluster_resolver,
       model_dir=flags_obj.model_dir,
       session_config=tf.ConfigProto(
           allow_soft_placement=True, log_device_placement=True),
       tpu_config=tpu_config)
 
-  return tf.contrib.tpu.TPUEstimator(
+  return tf.estimator.tpu.TPUEstimator(
       model_fn=model_fn,
       use_tpu=params["use_tpu"] and flags_obj.tpu != tpu_util.LOCAL,
       train_batch_size=schedule_manager.batch_size,
       eval_batch_size=schedule_manager.batch_size,
       params={
           # TPUEstimator needs to populate batch_size itself due to sharding.
-          key: value for key, value in params.items() if key != "batch_size"},
+          key: value for key, value in params.items() if key != "batch_size"
+      },
       config=run_config)
 
 

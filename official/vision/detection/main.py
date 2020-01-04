@@ -29,13 +29,20 @@ import tensorflow.compat.v2 as tf
 
 from official.modeling.hyperparams import params_dict
 from official.modeling.training import distributed_executor as executor
+from official.utils import hyperparams_flags
 from official.vision.detection.configs import factory as config_factory
 from official.vision.detection.dataloader import input_reader
 from official.vision.detection.dataloader import mode_keys as ModeKeys
 from official.vision.detection.executor.detection_executor import DetectionDistributedExecutor
 from official.vision.detection.modeling import factory as model_factory
+from official.utils.misc import keras_utils
 
-executor.initialize_common_flags()
+hyperparams_flags.initialize_common_flags()
+
+flags.DEFINE_bool(
+    'enable_xla',
+    default=False,
+    help='Enable XLA for GPU')
 
 flags.DEFINE_string(
     'mode',
@@ -165,6 +172,8 @@ def run_executor(params,
 
 
 def run(callbacks=None):
+  keras_utils.set_session_config(enable_xla=FLAGS.enable_xla)
+
   params = config_factory.config_generator(FLAGS.model)
 
   params = params_dict.override_params_dict(

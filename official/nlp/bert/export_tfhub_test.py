@@ -24,7 +24,7 @@ import numpy as np
 
 import tensorflow as tf
 import tensorflow_hub as hub
-from official.nlp import bert_modeling
+from official.nlp.bert import configs
 from official.nlp.bert import export_tfhub
 
 
@@ -32,7 +32,7 @@ class ExportTfhubTest(tf.test.TestCase):
 
   def test_export_tfhub(self):
     # Exports a savedmodel for TF-Hub
-    bert_config = bert_modeling.BertConfig(
+    bert_config = configs.BertConfig(
         vocab_size=100,
         hidden_size=16,
         intermediate_size=32,
@@ -84,5 +84,4 @@ class ExportTfhubTest(tf.test.TestCase):
 
 
 if __name__ == "__main__":
-  assert tf.version.VERSION.startswith('2.')
   tf.test.main()

@@ -157,7 +157,6 @@ def define_ncf_flags():
       loss_scale=True,
       dynamic_loss_scale=True,
       enable_xla=True,
-      force_v2_in_keras_compile=True
   )
   flags_core.define_device(tpu=True)
   flags_core.define_benchmark()
@@ -168,7 +167,7 @@ def define_ncf_flags():
       model_dir="/tmp/ncf/",
       data_dir="/tmp/movielens-data/",
       train_epochs=2,
-      batch_size=256,
+      batch_size=99000,
       hooks="ProfilerHook",
       tpu=None
   )

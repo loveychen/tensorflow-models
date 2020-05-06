@@ -51,7 +51,6 @@ flags.DEFINE_bool('use_next_sentence_label', True,
                   'Whether to use next sentence label to compute final loss.')
 
 common_flags.define_common_bert_flags()
-common_flags.define_gin_flags()
 
 FLAGS = flags.FLAGS
 
@@ -88,6 +87,7 @@ def get_loss_fn():
 
 def run_customized_training(strategy,
                             bert_config,
+                            init_checkpoint,
                             max_seq_length,
                             max_predictions_per_seq,
                             model_dir,
@@ -100,7 +100,8 @@ def run_customized_training(strategy,
                             optimizer_type,
                             input_files,
                             train_batch_size,
-                            use_next_sentence_label=True):
+                            use_next_sentence_label=True,
+                            custom_callbacks=None):
   """Run BERT pretrain model training using low-level API."""
 
   train_input_fn = get_pretrain_dataset_fn(input_files, max_seq_length,
@@ -128,16 +129,18 @@ def run_customized_training(strategy,
       loss_fn=get_loss_fn(),
       scale_loss=FLAGS.scale_loss,
       model_dir=model_dir,
+      init_checkpoint=init_checkpoint,
       train_input_fn=train_input_fn,
       steps_per_epoch=steps_per_epoch,
       steps_per_loop=steps_per_loop,
       epochs=epochs,
-      sub_model_export_name='pretrained/bert_model')
+      sub_model_export_name='pretrained/bert_model',
+      custom_callbacks=custom_callbacks)
 
   return trained_model
 
 
-def run_bert_pretrain(strategy):
+def run_bert_pretrain(strategy, custom_callbacks=None):
   """Runs BERT pre-training."""
 
   bert_config = configs.BertConfig.from_json_file(FLAGS.bert_config_file)
@@ -145,7 +148,7 @@ def run_bert_pretrain(strategy):
     raise ValueError('Distribution strategy is not specified.')
 
   # Runs customized training loop.
-  logging.info('Training using customized training loop TF 2.0 with distrubuted'
+  logging.info('Training using customized training loop TF 2.0 with distributed'
                'strategy.')
 
   performance.set_mixed_precision_policy(common_flags.dtype())
@@ -153,6 +156,7 @@ def run_bert_pretrain(strategy):
   return run_customized_training(
       strategy,
       bert_config,
+      FLAGS.init_checkpoint,  # Used to initialize only the BERT submodel.
       FLAGS.max_seq_length,
       FLAGS.max_predictions_per_seq,
       FLAGS.model_dir,
@@ -165,7 +169,8 @@ def run_bert_pretrain(strategy):
       FLAGS.optimizer_type,
       FLAGS.input_files,
       FLAGS.train_batch_size,
-      FLAGS.use_next_sentence_label)
+      FLAGS.use_next_sentence_label,
+      custom_callbacks=custom_callbacks)
 
 
 def main(_):

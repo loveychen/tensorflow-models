@@ -1,5 +1,7 @@
 # Running on mobile with TensorFlow Lite
 
+[![TensorFlow 1.15](https://img.shields.io/badge/TensorFlow-1.15-FF6F00?logo=tensorflow)](https://github.com/tensorflow/tensorflow/releases/tag/v1.15.0)
+
 In this section, we will show you how to use [TensorFlow
 Lite](https://www.tensorflow.org/mobile/tflite/) to get a smaller model and
 allow you take advantage of ops that have been optimized for mobile devices.
@@ -8,12 +10,12 @@ devices. It enables on-device machine learning inference with low latency and a
 small binary size. TensorFlow Lite uses many techniques for this such as
 quantized kernels that allow smaller and faster (fixed-point math) models.
 
-For this section, you will need to build [TensorFlow from
-source](https://www.tensorflow.org/install/install_sources) to get the
-TensorFlow Lite support for the SSD model. At this time only SSD models are supported.
-Models like faster_rcnn are not supported at this time. You will also need to install the
-[bazel build
-tool](https://github.com/tensorflow/tensorflow/tree/master/tensorflow/examples/android#bazel).
+For this section, you will need to build
+[TensorFlow from source](https://www.tensorflow.org/install/install_sources) to
+get the TensorFlow Lite support for the SSD model. At this time only SSD models
+are supported. Models like faster_rcnn are not supported at this time. You will
+also need to install the
+[bazel build tool](https://github.com/tensorflow/tensorflow/tree/master/tensorflow/examples/android#bazel).
 
 To make these commands easier to run, let’s set up some environment variables:
 
@@ -49,22 +51,23 @@ will output the frozen graph that we can input to TensorFlow Lite directly and
 is the one we’ll be using.
 
 Next we’ll use TensorFlow Lite to get the optimized model by using
-[TOCO](https://github.com/tensorflow/tensorflow/tree/master/tensorflow/lite/toco),
+[TfLite Converter](https://www.tensorflow.org/lite/convert),
 the TensorFlow Lite Optimizing Converter. This will convert the resulting frozen
 graph (tflite_graph.pb) to the TensorFlow Lite flatbuffer format (detect.tflite)
 via the following command. For a quantized model, run this from the tensorflow/
 directory:
 
 ```shell
-bazel run --config=opt tensorflow/lite/toco:toco -- \
---input_file=$OUTPUT_DIR/tflite_graph.pb \
+bazel run -c opt tensorflow/lite/python:tflite_convert -- \
+--enable_v1_converter \
+--graph_def_file=$OUTPUT_DIR/tflite_graph.pb \
 --output_file=$OUTPUT_DIR/detect.tflite \
 --input_shapes=1,300,300,3 \
 --input_arrays=normalized_input_image_tensor \
 --output_arrays='TFLite_Detection_PostProcess','TFLite_Detection_PostProcess:1','TFLite_Detection_PostProcess:2','TFLite_Detection_PostProcess:3' \
 --inference_type=QUANTIZED_UINT8 \
 --mean_values=128 \
---std_values=128 \
+--std_dev_values=128 \
 --change_concat_input_ranges=false \
 --allow_custom_ops
 ```
@@ -82,8 +85,9 @@ parameters and can be run via the TensorFlow Lite interpreter on the Android
 device. For a floating point model, run this from the tensorflow/ directory:
 
 ```shell
-bazel run --config=opt tensorflow/lite/toco:toco -- \
---input_file=$OUTPUT_DIR/tflite_graph.pb \
+bazel run -c opt tensorflow/lite/python:tflite_convert -- \
+--enable_v1_converter \
+--graph_def_file=$OUTPUT_DIR/tflite_graph.pb \
 --output_file=$OUTPUT_DIR/detect.tflite \
 --input_shapes=1,300,300,3 \
 --input_arrays=normalized_input_image_tensor \
@@ -92,7 +96,17 @@ bazel run --config=opt tensorflow/lite/toco:toco -- \
 --allow_custom_ops
 ```
 
-# Running our model on Android
+## Adding Metadata to the model
+
+To make it easier to use tflite models on mobile, you will need to add
+[metadata](https://www.tensorflow.org/lite/convert/metadata) to your model and
+also
+[pack](https://www.tensorflow.org/lite/convert/metadata#pack_metadata_and_associated_files_into_the_model)
+the associated labels file to it.
+If you need more information, this process is also explained in the
+[Metadata writer Object detectors documentation](https://www.tensorflow.org/lite/convert/metadata_writer_tutorial#object_detectors)
+
+## Running our model on Android
 
 To run our TensorFlow Lite model on device, we will use Android Studio to build
 and run the TensorFlow Lite detection example with the new model. The example is
@@ -115,8 +129,8 @@ cp /tmp/tflite/detect.tflite \
   $TF_EXAMPLES/lite/examples/object_detection/android/app/src/main/assets
 ```
 
-You will also need to copy your new labelmap labelmap.txt to the assets
-directory.
+It's important to notice that the labels file should be packed in the model (as
+mentioned previously)
 
 We will now edit the gradle build file to use these assets. First, open the
 `build.gradle` file
@@ -124,17 +138,15 @@ We will now edit the gradle build file to use these assets. First, open the
 out the model download script to avoid your assets being overwritten: `// apply
 from:'download_model.gradle'` ```
 
-If your model is named `detect.tflite`, and your labels file `labelmap.txt`, the
-example will use them automatically as long as they've been properly copied into
-the base assets directory. If you need to use a custom path or filename, open up
-the
+If your model is named `detect.tflite`, the example will use it automatically as
+long as they've been properly copied into the base assets directory. If you need
+to use a custom path or filename, open up the
 $TF_EXAMPLES/lite/examples/object_detection/android/app/src/main/java/org/tensorflow/demo/DetectorActivity.java
-file in a text editor and find the definition of TF_OD_API_LABELS_FILE. Update
-this path to point to your new label map file:
-"labels_list.txt". Note that if your model is quantized,
-the flag TF_OD_API_IS_QUANTIZED is set to true, and if your model is floating
-point, the flag TF_OD_API_IS_QUANTIZED is set to false. This new section of
-DetectorActivity.java should now look as follows for a quantized model:
+file in a text editor and find the definition of TF_OD_API_MODEL_FILE. Note that
+if your model is quantized, the flag TF_OD_API_IS_QUANTIZED is set to true, and
+if your model is floating point, the flag TF_OD_API_IS_QUANTIZED is set to
+false. This new section of DetectorActivity.java should now look as follows for
+a quantized model:
 
 ```shell
   private static final boolean TF_OD_API_IS_QUANTIZED = true;

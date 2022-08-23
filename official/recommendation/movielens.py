@@ -1,4 +1,4 @@
-# Copyright 2018 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# ==============================================================================
+
 """Download and extract the MovieLens dataset from GroupLens website.
 
 Download the dataset, and perform basic preprocessing.
@@ -27,6 +27,7 @@ import tempfile
 import zipfile
 
 # pylint: disable=g-bad-import-order
+# Import libraries
 import numpy as np
 import pandas as pd
 import six
@@ -48,7 +49,7 @@ RATINGS_FILE = "ratings.csv"
 MOVIES_FILE = "movies.csv"
 
 # URL to download dataset
-_DATA_URL = "http://files.grouplens.org/datasets/movielens/"
+_DATA_URL = "https://files.grouplens.org/datasets/movielens/"
 
 GENRE_COLUMN = "genres"
 ITEM_COLUMN = "item_id"  # movies
@@ -83,6 +84,8 @@ NUM_RATINGS = {
     ML_1M: 1000209,
     ML_20M: 20000263
 }
+
+DATASET_TO_NUM_USERS_AND_ITEMS = {ML_1M: (6040, 3706), ML_20M: (138493, 26744)}
 
 
 def _download_and_clean(dataset, data_dir):
@@ -284,17 +287,24 @@ def integerize_genres(dataframe):
   return dataframe
 
 
+def define_flags():
+  """Add flags specifying data usage arguments."""
+  flags.DEFINE_enum(
+      name="dataset",
+      default=None,
+      enum_values=DATASETS,
+      case_sensitive=False,
+      help=flags_core.help_wrap("Dataset to be trained and evaluated."))
+
+
 def define_data_download_flags():
-  """Add flags specifying data download arguments."""
+  """Add flags specifying data download and usage arguments."""
   flags.DEFINE_string(
       name="data_dir", default="/tmp/movielens-data/",
       help=flags_core.help_wrap(
           "Directory to download and extract data."))
 
-  flags.DEFINE_enum(
-      name="dataset", default=None,
-      enum_values=DATASETS, case_sensitive=False,
-      help=flags_core.help_wrap("Dataset to be trained and evaluated."))
+  define_flags()
 
 
 def main(_):

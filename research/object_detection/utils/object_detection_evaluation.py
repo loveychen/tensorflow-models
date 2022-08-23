@@ -40,7 +40,7 @@ import numpy as np
 import six
 from six.moves import range
 from six.moves import zip
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
 
 from object_detection.core import standard_fields
 from object_detection.utils import label_map_util
@@ -159,7 +159,9 @@ class ObjectDetectionEvaluator(DetectionEvaluator):
                metric_prefix=None,
                use_weighted_mean_ap=False,
                evaluate_masks=False,
-               group_of_weight=0.0):
+               group_of_weight=0.0,
+               nms_iou_threshold=1.0,
+               nms_max_output_boxes=10000):
     """Constructor.
 
     Args:
@@ -187,6 +189,8 @@ class ObjectDetectionEvaluator(DetectionEvaluator):
         matching_iou_threshold, weight group_of_weight is added to true
         positives. Consequently, if no detection falls within a group-of box,
         weight group_of_weight is added to false negatives.
+      nms_iou_threshold: NMS IoU threashold.
+      nms_max_output_boxes: maximal number of boxes after NMS.
 
     Raises:
       ValueError: If the category ids are not 1-indexed.
@@ -202,6 +206,8 @@ class ObjectDetectionEvaluator(DetectionEvaluator):
     self._label_id_offset = 1
     self._evaluate_masks = evaluate_masks
     self._group_of_weight = group_of_weight
+    self._nms_iou_threshold = nms_iou_threshold
+    self._nms_max_output_boxes = nms_max_output_boxes
     self._evaluation = ObjectDetectionEvaluation(
         num_groundtruth_classes=self._num_classes,
         matching_iou_threshold=self._matching_iou_threshold,
@@ -209,7 +215,9 @@ class ObjectDetectionEvaluator(DetectionEvaluator):
         recall_upper_bound=self._recall_upper_bound,
         use_weighted_mean_ap=self._use_weighted_mean_ap,
         label_id_offset=self._label_id_offset,
-        group_of_weight=self._group_of_weight)
+        group_of_weight=self._group_of_weight,
+        nms_iou_threshold=self._nms_iou_threshold,
+        nms_max_output_boxes=self._nms_max_output_boxes)
     self._image_ids = set([])
     self._evaluate_corlocs = evaluate_corlocs
     self._evaluate_precision_recall = evaluate_precision_recall
@@ -246,7 +254,8 @@ class ObjectDetectionEvaluator(DetectionEvaluator):
     """
     for image_id in image_ids:
       if image_id in self._image_ids:
-        raise ValueError('Image with id {} already added.'.format(image_id))
+        logging.warning('Image with id %s already added.', image_id)
+    self._image_ids.update(image_ids)
 
     self._evaluation.merge_internal_state(state_tuple)
 
@@ -313,7 +322,7 @@ class ObjectDetectionEvaluator(DetectionEvaluator):
         raise error if instance masks are not in groundtruth dictionary.
     """
     if image_id in self._image_ids:
-      raise ValueError('Image with id {} already added.'.format(image_id))
+      logging.warning('Image with id %s already added.', image_id)
 
     groundtruth_classes = (
         groundtruth_dict[standard_fields.InputDataFields.groundtruth_classes] -
@@ -321,8 +330,8 @@ class ObjectDetectionEvaluator(DetectionEvaluator):
     # If the key is not present in the groundtruth_dict or the array is empty
     # (unless there are no annotations for the groundtruth on this image)
     # use values from the dictionary or insert None otherwise.
-    if (standard_fields.InputDataFields.groundtruth_difficult in six.viewkeys(
-        groundtruth_dict) and
+    if (standard_fields.InputDataFields.groundtruth_difficult
+        in six.viewkeys(groundtruth_dict) and
         (groundtruth_dict[standard_fields.InputDataFields.groundtruth_difficult]
          .size or not groundtruth_classes.size)):
       groundtruth_difficult = groundtruth_dict[
@@ -335,8 +344,8 @@ class ObjectDetectionEvaluator(DetectionEvaluator):
             image_id)
     groundtruth_masks = None
     if self._evaluate_masks:
-      if (standard_fields.InputDataFields.groundtruth_instance_masks not in
-          groundtruth_dict):
+      if (standard_fields.InputDataFields.groundtruth_instance_masks
+          not in groundtruth_dict):
         raise ValueError('Instance masks not in groundtruth dictionary.')
       groundtruth_masks = groundtruth_dict[
           standard_fields.InputDataFields.groundtruth_instance_masks]
@@ -454,7 +463,10 @@ class ObjectDetectionEvaluator(DetectionEvaluator):
         num_groundtruth_classes=self._num_classes,
         matching_iou_threshold=self._matching_iou_threshold,
         use_weighted_mean_ap=self._use_weighted_mean_ap,
-        label_id_offset=self._label_id_offset)
+        label_id_offset=self._label_id_offset,
+        nms_iou_threshold=self._nms_iou_threshold,
+        nms_max_output_boxes=self._nms_max_output_boxes,
+    )
     self._image_ids.clear()
 
   def add_eval_dict(self, eval_dict):
@@ -549,13 +561,19 @@ class ObjectDetectionEvaluator(DetectionEvaluator):
 class PascalDetectionEvaluator(ObjectDetectionEvaluator):
   """A class to evaluate detections using PASCAL metrics."""
 
-  def __init__(self, categories, matching_iou_threshold=0.5):
+  def __init__(self,
+               categories,
+               matching_iou_threshold=0.5,
+               nms_iou_threshold=1.0,
+               nms_max_output_boxes=10000):
     super(PascalDetectionEvaluator, self).__init__(
         categories,
         matching_iou_threshold=matching_iou_threshold,
         evaluate_corlocs=False,
         metric_prefix='PascalBoxes',
-        use_weighted_mean_ap=False)
+        use_weighted_mean_ap=False,
+        nms_iou_threshold=nms_iou_threshold,
+        nms_max_output_boxes=nms_max_output_boxes)
 
 
 class WeightedPascalDetectionEvaluator(ObjectDetectionEvaluator):
@@ -588,7 +606,8 @@ class PrecisionAtRecallDetectionEvaluator(ObjectDetectionEvaluator):
                categories,
                matching_iou_threshold=0.5,
                recall_lower_bound=0.0,
-               recall_upper_bound=1.0):
+               recall_upper_bound=1.0,
+               skip_predictions_for_unlabeled_class=False):
     super(PrecisionAtRecallDetectionEvaluator, self).__init__(
         categories,
         matching_iou_threshold=matching_iou_threshold,
@@ -597,6 +616,83 @@ class PrecisionAtRecallDetectionEvaluator(ObjectDetectionEvaluator):
         evaluate_corlocs=False,
         metric_prefix='PrecisionAtRecallBoxes',
         use_weighted_mean_ap=False)
+    self._skip_predictions_for_unlabeled_class = skip_predictions_for_unlabeled_class
+    self._expected_keys.update(
+        [standard_fields.InputDataFields.groundtruth_labeled_classes])
+    self.groundtruth_labeled_classes = {}
+
+  def add_single_ground_truth_image_info(self, image_id, groundtruth_dict):
+    """Adds groundtruth for a single image to be used for evaluation.
+
+      If the labeled classes field is present, a map of image_id to
+      groundtruth_labeled_classes is populated with the one-hot labeled classes.
+
+    Args:
+      image_id: A unique string/integer identifier for the image.
+      groundtruth_dict: A dictionary containing -
+        standard_fields.InputDataFields.groundtruth_labeled_classes: Optional
+          numpy one-hot integer array of shape [num_classes+1] containing 1
+          for classes that are labeled in the image and 0 otherwise.
+
+    Raises:
+      ValueError: If shape of labeled classes field is not as expected.
+    """
+
+    super(PrecisionAtRecallDetectionEvaluator,
+          self).add_single_ground_truth_image_info(image_id, groundtruth_dict)
+    labeled_classes = groundtruth_dict.get(
+        standard_fields.InputDataFields.groundtruth_labeled_classes, None)
+
+    if self._skip_predictions_for_unlabeled_class and labeled_classes is not None:
+      if labeled_classes.shape != (self._num_classes + 1,):
+        raise ValueError('Invalid shape for groundtruth labeled classes: {}, '
+                         'num_categories_including_background: {}'.format(
+                             labeled_classes, self._num_classes + 1))
+      labeled_classes = np.flatnonzero(labeled_classes == 1).tolist()
+      self.groundtruth_labeled_classes[image_id] = labeled_classes
+    else:
+      self.groundtruth_labeled_classes[image_id] = None
+
+  def add_single_detected_image_info(self, image_id, detections_dict):
+    """Adds detections for a single image to be used for evaluation.
+
+       If the labeled classes field has been populated for the given image_id,
+       the detections for classes that are not in the labeled classes are
+       filtered out.
+
+    Args:
+      image_id: A unique string/integer identifier for the image.
+      detections_dict: A dictionary containing -
+        standard_fields.DetectionResultFields.detection_boxes: float32 numpy
+        array of shape [num_boxes, 4] containing `num_boxes` detection boxes of
+        the format [ymin, xmin, ymax, xmax] in absolute image coordinates.
+        standard_fields.DetectionResultFields.detection_scores: float32 numpy
+        array of shape [num_boxes] containing detection scores for the boxes.
+        standard_fields.DetectionResultFields.detection_classes: integer numpy
+        array of shape [num_boxes] containing 1-indexed detection classes for
+        the boxes.
+    """
+    groundtruth_labeled_classes = self.groundtruth_labeled_classes[image_id]
+
+    if groundtruth_labeled_classes is not None:
+
+      detection_classes_key = standard_fields.DetectionResultFields.detection_classes
+      detected_boxes_key = standard_fields.DetectionResultFields.detection_boxes
+      detected_scores_key = standard_fields.DetectionResultFields.detection_scores
+
+      # Only keep detection if label is in groundtruth_labeled_classes.
+      allowed = np.isin(detections_dict[detection_classes_key],
+                        groundtruth_labeled_classes)
+
+      detections_dict[detection_classes_key] = detections_dict[
+          detection_classes_key][allowed]
+      detections_dict[detected_boxes_key] = detections_dict[detected_boxes_key][
+          allowed]
+      detections_dict[detected_scores_key] = detections_dict[
+          detected_scores_key][allowed]
+
+    super(PrecisionAtRecallDetectionEvaluator,
+          self).add_single_detected_image_info(image_id, detections_dict)
 
 
 class PascalInstanceSegmentationEvaluator(ObjectDetectionEvaluator):
@@ -712,7 +808,7 @@ class OpenImagesDetectionEvaluator(ObjectDetectionEvaluator):
       ValueError: On adding groundtruth for an image more than once.
     """
     if image_id in self._image_ids:
-      raise ValueError('Image with id {} already added.'.format(image_id))
+      logging.warning('Image with id %s already added.', image_id)
 
     groundtruth_classes = (
         groundtruth_dict[standard_fields.InputDataFields.groundtruth_classes] -
@@ -815,8 +911,11 @@ class OpenImagesChallengeEvaluator(OpenImagesDetectionEvaluator):
         metric_prefix=metrics_prefix)
 
     self._evaluatable_labels = {}
-    self._expected_keys.add(
-        standard_fields.InputDataFields.groundtruth_image_classes)
+    # Only one of the two has to be provided, but both options are given
+    # for compatibility with previous codebase.
+    self._expected_keys.update([
+        standard_fields.InputDataFields.groundtruth_image_classes,
+        standard_fields.InputDataFields.groundtruth_labeled_classes])
 
   def add_single_ground_truth_image_info(self, image_id, groundtruth_dict):
     """Adds groundtruth for a single image to be used for evaluation.
@@ -841,14 +940,21 @@ class OpenImagesChallengeEvaluator(OpenImagesDetectionEvaluator):
     """
     super(OpenImagesChallengeEvaluator,
           self).add_single_ground_truth_image_info(image_id, groundtruth_dict)
+    input_fields = standard_fields.InputDataFields
     groundtruth_classes = (
-        groundtruth_dict[standard_fields.InputDataFields.groundtruth_classes] -
+        groundtruth_dict[input_fields.groundtruth_classes] -
         self._label_id_offset)
+    image_classes = np.array([], dtype=int)
+    if input_fields.groundtruth_image_classes in groundtruth_dict:
+      image_classes = groundtruth_dict[input_fields.groundtruth_image_classes]
+    elif input_fields.groundtruth_labeled_classes in groundtruth_dict:
+      image_classes = groundtruth_dict[input_fields.groundtruth_labeled_classes]
+    else:
+      logging.warning('No image classes field found for image with id %s!',
+                      image_id)
+    image_classes -= self._label_id_offset
     self._evaluatable_labels[image_id] = np.unique(
-        np.concatenate(((groundtruth_dict.get(
-            standard_fields.InputDataFields.groundtruth_image_classes,
-            np.array([], dtype=int)) - self._label_id_offset),
-                        groundtruth_classes)))
+        np.concatenate((image_classes, groundtruth_classes)))
 
   def add_single_detected_image_info(self, image_id, detections_dict):
     """Adds detections for a single image to be used for evaluation.
@@ -1219,7 +1325,6 @@ class ObjectDetectionEvaluation(object):
             groundtruth_is_group_of_list=groundtruth_is_group_of_list,
             detected_masks=detected_masks,
             groundtruth_masks=groundtruth_masks))
-
     for i in range(self.num_class):
       if scores[i].shape[0] > 0:
         self.scores_per_class[i].append(scores[i])
@@ -1308,7 +1413,8 @@ class ObjectDetectionEvaluation(object):
       average_precision = metrics.compute_average_precision(
           precision_within_bound, recall_within_bound)
       self.average_precision_per_class[class_index] = average_precision
-      logging.info('average_precision: %f', average_precision)
+      logging.info(
+          'class %d average_precision: %f', class_index, average_precision)
 
     self.corloc_per_class = metrics.compute_cor_loc(
         self.num_gt_imgs_per_class,

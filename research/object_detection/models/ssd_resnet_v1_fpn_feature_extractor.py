@@ -17,8 +17,13 @@
 See https://arxiv.org/abs/1708.02002 for details.
 """
 
-import tensorflow as tf
-from tensorflow.contrib import slim as contrib_slim
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
+from six.moves import range
+import tensorflow.compat.v1 as tf
+import tf_slim as slim
 
 from object_detection.meta_architectures import ssd_meta_arch
 from object_detection.models import feature_map_generators
@@ -26,8 +31,6 @@ from object_detection.utils import context_manager
 from object_detection.utils import ops
 from object_detection.utils import shape_utils
 from nets import resnet_v1
-
-slim = contrib_slim
 
 
 class SSDResnetV1FpnFeatureExtractor(ssd_meta_arch.SSDFeatureExtractor):

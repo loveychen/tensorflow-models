@@ -1,4 +1,4 @@
-# Copyright 2020 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,13 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# ==============================================================================
+
 """Tests for Keras-based rezero-transformer block layer."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
+from absl.testing import parameterized
 import numpy as np
 import tensorflow as tf
 
@@ -32,14 +29,17 @@ class TransformerWithReZeroLayerTest(keras_parameterized.TestCase):
 
   def tearDown(self):
     super(TransformerWithReZeroLayerTest, self).tearDown()
-    tf.keras.mixed_precision.experimental.set_policy('float32')
+    tf.keras.mixed_precision.set_global_policy('float32')
 
-  def test_layer_invocation_with_float16_dtype(self):
-    tf.keras.mixed_precision.experimental.set_policy('mixed_float16')
+  @parameterized.named_parameters(('no_share_attn_ffn', False),
+                                  ('share_attn_ffn', True))
+  def test_layer_invocation_with_float16_dtype(self, share_rezero):
+    tf.keras.mixed_precision.set_global_policy('mixed_float16')
     test_layer = rezero_transformer.ReZeroTransformer(
         num_attention_heads=10,
         intermediate_size=2048,
-        intermediate_activation='relu')
+        intermediate_activation='relu',
+        share_rezero=share_rezero)
     sequence_length = 21
     width = 80
     # Create a 3-dimensional input (the first dimension is implicit).
@@ -95,11 +95,52 @@ class TransformerWithReZeroLayerTest(keras_parameterized.TestCase):
 
     input_data = np.random.rand(2, input_length, width) + 2.0
     output_data = model.predict(input_data)
-    input_data_normed = (
-        input_data - np.mean(input_data, axis=-1, keepdims=True)) / (
-            np.std(input_data, axis=-1, keepdims=True))
+    input_data_normed = (input_data -
+                         np.mean(input_data, axis=-1, keepdims=True)) / (
+                             np.std(input_data, axis=-1, keepdims=True))
 
     self.assertAllClose(input_data_normed, output_data)
+
+  def test_layer_output_range(self):
+    test_layer = rezero_transformer.ReZeroTransformer(
+        num_attention_heads=10,
+        intermediate_size=2048,
+        intermediate_activation='relu')
+    sequence_length = 21
+    width = 80
+
+    batch_size = 6
+    input_data = 10 * np.random.random_sample(
+        (batch_size, sequence_length, width))
+    mask_data = np.random.randint(
+        2, size=(batch_size, sequence_length, sequence_length))
+    output_tensor = test_layer([input_data, mask_data])
+
+    # The layer only attends to the first token and outputs the first token
+    # embeeding.
+    new_layer = rezero_transformer.ReZeroTransformer(
+        num_attention_heads=10,
+        intermediate_size=2048,
+        intermediate_activation='relu',
+        output_range=1)
+    _ = new_layer([input_data, mask_data])
+    new_layer.set_weights(test_layer.get_weights())
+    new_output_tensor = new_layer([input_data, mask_data])
+    self.assertAllClose(new_output_tensor, output_tensor[:, 0:1, :])
+
+  def test_separate_qkv(self):
+    test_layer = rezero_transformer.ReZeroTransformer(
+        num_attention_heads=2,
+        intermediate_size=128,
+        intermediate_activation='relu',
+        kernel_initializer=tf.keras.initializers.TruncatedNormal(stddev=0.02))
+    # Forward path.
+    q_tensor = tf.zeros([2, 4, 16], dtype=tf.float32)
+    kv_tensor = tf.zeros([2, 8, 16], dtype=tf.float32)
+    dummy_mask = tf.zeros([2, 4, 8], dtype=tf.float32)
+    inputs = [q_tensor, kv_tensor, dummy_mask]
+    output = test_layer(inputs)
+    self.assertEqual(output.shape, q_tensor.shape)
 
 
 if __name__ == '__main__':

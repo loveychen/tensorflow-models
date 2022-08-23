@@ -1,5 +1,4 @@
-# Lint as: python3
-# Copyright 2020 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,45 +11,43 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# ==============================================================================
+
 """Functions and classes related to training performance."""
 
+from absl import logging
 import tensorflow as tf
 
 
 def configure_optimizer(optimizer,
                         use_float16=False,
-                        use_graph_rewrite=False,
-                        loss_scale="dynamic"):
+                        loss_scale=None,
+                        use_graph_rewrite=None):
   """Configures optimizer object with performance options."""
+  if use_graph_rewrite is not None:
+    logging.warning('`use_graph_rewrite` is deprecated inside '
+                    '`configure_optimizer`. Please remove the usage.')
+  del use_graph_rewrite
   if use_float16:
-    # Wraps optimizer with a LossScaleOptimizer. This is done automatically
-    # in compile() with the "mixed_float16" policy, but since we do not call
-    # compile(), we must wrap the optimizer manually.
-    optimizer = (
-        tf.keras.mixed_precision.experimental.LossScaleOptimizer(
-            optimizer, loss_scale=loss_scale))
-  if use_graph_rewrite:
-    # Note: the model dtype must be 'float32', which will ensure
-    # tf.ckeras.mixed_precision and
-    # tf.train.experimental.enable_mixed_precision_graph_rewrite do not double
-    # up.
-    optimizer = tf.train.experimental.enable_mixed_precision_graph_rewrite(
-        optimizer)
+    if loss_scale in (None, 'dynamic'):
+      optimizer = tf.keras.mixed_precision.LossScaleOptimizer(optimizer)
+    else:
+      # loss_scale is a number. We interpret that as a fixed loss scale.
+      optimizer = tf.keras.mixed_precision.LossScaleOptimizer(
+          optimizer, dynamic=False, initial_scale=loss_scale)
   return optimizer
 
 
 def set_mixed_precision_policy(dtype, loss_scale=None):
-  """Sets mix precision policy."""
+  """Sets the global `tf.keras.mixed_precision.Policy`."""
+  # TODO(b/191894773): Remove loss_scale argument
+  assert loss_scale is None, (
+      'The loss_scale argument must be None. The argument exists for '
+      'historical reasons and will be removed soon.')
   if dtype == tf.float16:
-    policy = tf.keras.mixed_precision.experimental.Policy(
-        'mixed_float16', loss_scale=loss_scale)
-    tf.keras.mixed_precision.experimental.set_policy(policy)
+    tf.keras.mixed_precision.set_global_policy('mixed_float16')
   elif dtype == tf.bfloat16:
-    policy = tf.keras.mixed_precision.experimental.Policy(
-        'mixed_bfloat16')
-    tf.keras.mixed_precision.experimental.set_policy(policy)
+    tf.keras.mixed_precision.set_global_policy('mixed_bfloat16')
   elif dtype == tf.float32:
-    tf.keras.mixed_precision.experimental.set_policy('float32')
+    tf.keras.mixed_precision.set_global_policy('float32')
   else:
-    raise ValueError("Unexpected dtype: %s" % dtype)
+    raise ValueError('Unexpected dtype: %s' % dtype)

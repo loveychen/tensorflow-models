@@ -18,14 +18,17 @@
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
+
+import unittest
 from absl.testing import parameterized
 import numpy as np
 import six
 from six.moves import range
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
 from object_detection import eval_util
 from object_detection.core import standard_fields
 from object_detection.utils import object_detection_evaluation
+from object_detection.utils import tf_version
 
 
 class OpenImagesV2EvaluationTest(tf.test.TestCase):
@@ -521,30 +524,6 @@ class PascalEvaluationTest(tf.test.TestCase):
     pascal_evaluator.clear()
     self.assertFalse(pascal_evaluator._image_ids)
 
-  def test_value_error_on_duplicate_images(self):
-    categories = [{'id': 1, 'name': 'cat'},
-                  {'id': 2, 'name': 'dog'},
-                  {'id': 3, 'name': 'elephant'}]
-    #  Add groundtruth
-    pascal_evaluator = object_detection_evaluation.PascalDetectionEvaluator(
-        categories)
-    image_key1 = 'img1'
-    groundtruth_boxes1 = np.array([[0, 0, 1, 1], [0, 0, 2, 2], [0, 0, 3, 3]],
-                                  dtype=float)
-    groundtruth_class_labels1 = np.array([1, 3, 1], dtype=int)
-    pascal_evaluator.add_single_ground_truth_image_info(
-        image_key1,
-        {standard_fields.InputDataFields.groundtruth_boxes: groundtruth_boxes1,
-         standard_fields.InputDataFields.groundtruth_classes:
-         groundtruth_class_labels1})
-    with self.assertRaises(ValueError):
-      pascal_evaluator.add_single_ground_truth_image_info(
-          image_key1,
-          {standard_fields.InputDataFields.groundtruth_boxes:
-           groundtruth_boxes1,
-           standard_fields.InputDataFields.groundtruth_classes:
-           groundtruth_class_labels1})
-
 
 class WeightedPascalEvaluationTest(tf.test.TestCase):
 
@@ -655,28 +634,6 @@ class WeightedPascalEvaluationTest(tf.test.TestCase):
                            1. / (3 + 1 + 2) / 3)
     self.wp_eval.clear()
     self.assertFalse(self.wp_eval._image_ids)
-
-  def test_value_error_on_duplicate_images(self):
-    #  Add groundtruth
-    self.wp_eval = (
-        object_detection_evaluation.WeightedPascalDetectionEvaluator(
-            self.categories))
-    image_key1 = 'img1'
-    groundtruth_boxes1 = np.array([[0, 0, 1, 1], [0, 0, 2, 2], [0, 0, 3, 3]],
-                                  dtype=float)
-    groundtruth_class_labels1 = np.array([1, 3, 1], dtype=int)
-    self.wp_eval.add_single_ground_truth_image_info(
-        image_key1,
-        {standard_fields.InputDataFields.groundtruth_boxes: groundtruth_boxes1,
-         standard_fields.InputDataFields.groundtruth_classes:
-         groundtruth_class_labels1})
-    with self.assertRaises(ValueError):
-      self.wp_eval.add_single_ground_truth_image_info(
-          image_key1,
-          {standard_fields.InputDataFields.groundtruth_boxes:
-           groundtruth_boxes1,
-           standard_fields.InputDataFields.groundtruth_classes:
-           groundtruth_class_labels1})
 
 
 class PrecisionAtRecallEvaluationTest(tf.test.TestCase):
@@ -804,30 +761,158 @@ class PrecisionAtRecallEvaluationTest(tf.test.TestCase):
     self.wp_eval.clear()
     self.assertFalse(self.wp_eval._image_ids)
 
-  def test_value_error_on_duplicate_images(self):
-    #  Add groundtruth
-    self.wp_eval = (
+  def test_returns_correct_metric_values_partial_labels(self):
+    # Create partial label evaluation object.
+    self.wp_eval_partial = (
         object_detection_evaluation.PrecisionAtRecallDetectionEvaluator(
-            self.categories, recall_lower_bound=0.0, recall_upper_bound=0.5))
+            self.categories,
+            recall_lower_bound=0.0,
+            recall_upper_bound=1.0,
+            skip_predictions_for_unlabeled_class=True))
+
+    # The first test case is as follows:
+    #
+    # Labeled classes: [cat, dog]
+    # +--------------------------+-------------------------------------+------+
+    # |       Groundtruth        |          Matched Detection          | Type |
+    # +--------------------------+-------------------------------------+------+
+    # | cat [10, 10, 11, 11]     | cat (0.6) [10, 10, 11, 11]          | TP   |
+    # | cat [100, 100, 220, 220] | -                                   | FN   |
+    # | dog [100, 100, 120, 120] | dog (0.8) [100, 100, 120, 120]      | TP   |
+    # | -                        | dog (0.9) [10, 10, 11, 11]          | FP   |
+    # | -                        | elephant (0.9) [100, 100, 220, 220] | IGN  |
+    # +--------------------------+-------------------------------------+------+
     image_key1 = 'img1'
-    groundtruth_boxes1 = np.array([[0, 0, 1, 1], [0, 0, 2, 2], [0, 0, 3, 3]],
-                                  dtype=float)
-    groundtruth_class_labels1 = np.array([1, 3, 1], dtype=int)
-    self.wp_eval.add_single_ground_truth_image_info(
+
+    # Add groundtruth boxes for img1.
+    groundtruth_boxes1 = np.array(
+        [[10, 10, 11, 11], [100, 100, 220, 220], [100, 100, 120, 120]],
+        dtype=float)
+    groundtruth_class_labels1 = np.array([1, 1, 2], dtype=int)
+    groundtruth_labeled_classes1 = np.array([0, 1, 1, 0], dtype=int)
+    self.wp_eval_partial.add_single_ground_truth_image_info(
         image_key1, {
             standard_fields.InputDataFields.groundtruth_boxes:
                 groundtruth_boxes1,
             standard_fields.InputDataFields.groundtruth_classes:
-                groundtruth_class_labels1
+                groundtruth_class_labels1,
+            standard_fields.InputDataFields.groundtruth_labeled_classes:
+                groundtruth_labeled_classes1
         })
-    with self.assertRaises(ValueError):
-      self.wp_eval.add_single_ground_truth_image_info(
-          image_key1, {
-              standard_fields.InputDataFields.groundtruth_boxes:
-                  groundtruth_boxes1,
-              standard_fields.InputDataFields.groundtruth_classes:
-                  groundtruth_class_labels1
-          })
+
+    # Add detected boxes for img1.
+    detected_boxes1 = np.array([[10, 10, 11, 11], [10, 10, 11, 11],
+                                [100, 100, 120, 120], [100, 100, 220, 220]],
+                               dtype=float)
+    detected_class_labels1 = np.array([1, 2, 2, 3], dtype=int)
+    detected_scores1 = np.array([0.6, 0.9, 0.8, 0.9], dtype=float)
+    self.wp_eval_partial.add_single_detected_image_info(
+        image_key1, {
+            standard_fields.DetectionResultFields.detection_boxes:
+                detected_boxes1,
+            standard_fields.DetectionResultFields.detection_scores:
+                detected_scores1,
+            standard_fields.DetectionResultFields.detection_classes:
+                detected_class_labels1
+        })
+
+    # The second test case is as follows:
+    #
+    # Labeled classes: [dog, elephant]
+    # +---------------------------+---------------------------------+------+
+    # |        Groundtruth        |        Matched Detection        | Type |
+    # +---------------------------+---------------------------------+------+
+    # | -                         | cat (0.8) [100, 100, 120, 120]  | IGN  |
+    # | dog [100, 100, 120, 120]  | -                               | FN   |
+    # | elephant [10, 10, 11, 11] | elephant (0.9) [10, 10, 11, 11] | TP   |
+    # +---------------------------+---------------------------------+------+
+    image_key2 = 'img2'
+
+    # Add groundtruth boxes for img2.
+    groundtruth_boxes2 = np.array(
+        [[100, 100, 120, 120], [10, 10, 11, 11]], dtype=float)
+    groundtruth_class_labels2 = np.array([2, 3], dtype=int)
+    groundtruth_labeled_classes2 = np.array([0, 0, 1, 1], dtype=int)
+    self.wp_eval_partial.add_single_ground_truth_image_info(
+        image_key2, {
+            standard_fields.InputDataFields.groundtruth_boxes:
+                groundtruth_boxes2,
+            standard_fields.InputDataFields.groundtruth_classes:
+                groundtruth_class_labels2,
+            standard_fields.InputDataFields.groundtruth_labeled_classes:
+                groundtruth_labeled_classes2
+        })
+
+    # Add detected boxes for img2.
+    detected_boxes2 = np.array(
+        [[100, 100, 120, 120], [10, 10, 11, 11]],
+        dtype=float)
+    detected_class_labels2 = np.array([1, 3], dtype=int)
+    detected_scores2 = np.array([0.8, 0.9], dtype=float)
+    self.wp_eval_partial.add_single_detected_image_info(
+        image_key2, {
+            standard_fields.DetectionResultFields.detection_boxes:
+                detected_boxes2,
+            standard_fields.DetectionResultFields.detection_scores:
+                detected_scores2,
+            standard_fields.DetectionResultFields.detection_classes:
+                detected_class_labels2
+        })
+
+    # Compute AP metrics.
+    metrics = self.wp_eval_partial.evaluate()
+
+    # Precision and recall for cat.
+    # +------------+------+-----------+--------+
+    # | Confidence | Type | Precision | Recall |
+    # +------------+------+-----------+--------+
+    # |        0.8 | IGN  |         - |      - |
+    # |        0.6 | TP   |       0.5 |    0.5 |
+    # +------------+------+-----------+--------+
+    # Expected AP: 0.5
+    self.assertAlmostEqual(
+        metrics[self.wp_eval_partial._metric_prefix +
+                'PerformanceByCategory/AP@0.5IOU/cat'], 0.5)
+
+    # Precision and recall for dog.
+    # +------------+------+-----------+--------+
+    # | Confidence | Type | Precision | Recall |
+    # +------------+------+-----------+--------+
+    # |        0.9 | FP   |       0.0 |    0.0 |
+    # |        0.8 | TP   |       0.5 |    0.5 |
+    # +------------+------+-----------+--------+
+    #
+    # After non-decreasing preprocessing of precision in
+    # third_party/tensorflow_models/object_detection/utils/metrics.py.
+    # +------------+------+-----------+--------+
+    # | Confidence | Type | Precision | Recall |
+    # +------------+------+-----------+--------+
+    # |        0.9 | FP   |       0.5 |    0.0 |
+    # |        0.8 | TP   |       0.5 |    0.5 |
+    # +------------+------+-----------+--------+
+    # Expected AP: 0.25
+    self.assertAlmostEqual(
+        metrics[self.wp_eval_partial._metric_prefix +
+                'PerformanceByCategory/AP@0.5IOU/dog'], 0.25)
+
+    # Precision and recall for elephant.
+    # +------------+------+-----------+--------+
+    # | Confidence | Type | Precision | Recall |
+    # +------------+------+-----------+--------+
+    # |        0.9 | IGN  |        -  |     -  |
+    # |        0.9 | TP   |       1.0 |    1.0 |
+    # +------------+------+-----------+--------+
+    # Expected AP: 1.0
+    self.assertAlmostEqual(
+        metrics[self.wp_eval_partial._metric_prefix +
+                'PerformanceByCategory/AP@0.5IOU/elephant'], 1.0)
+
+    # Expected mAP: (AP_cat + AP_dog + AP_elephant) / 3 = (0.25 + 1.0 + 0.5) / 3
+    self.assertAlmostEqual(
+        metrics[self.wp_eval_partial._metric_prefix +
+                'Precision/mAP@0.5IOU'], (0.25 + 1.0 + 0.5) / 3)
+    self.wp_eval_partial.clear()
+    self.assertFalse(self.wp_eval_partial._image_ids)
 
 
 class ObjectDetectionEvaluationTest(tf.test.TestCase):
@@ -970,6 +1055,8 @@ class ObjectDetectionEvaluationTest(tf.test.TestCase):
     self.assertAlmostEqual(copy_mean_corloc, mean_corloc)
 
 
+@unittest.skipIf(tf_version.is_tf2(), 'Eval Metrics ops are supported in TF1.X '
+                 'only.')
 class ObjectDetectionEvaluatorTest(tf.test.TestCase, parameterized.TestCase):
 
   def setUp(self):
@@ -1013,7 +1100,7 @@ class ObjectDetectionEvaluatorTest(tf.test.TestCase, parameterized.TestCase):
                                  axis=0)
     detection_classes = tf.tile(tf.constant([[0]]), multiples=[batch_size, 1])
     detection_masks = tf.tile(
-        tf.ones(shape=[1, 2, 20, 20], dtype=tf.float32),
+        tf.ones(shape=[1, 1, 20, 20], dtype=tf.float32),
         multiples=[batch_size, 1, 1, 1])
     groundtruth_boxes = tf.constant([[0., 0., 1., 1.]])
     groundtruth_classes = tf.constant([1])
@@ -1038,6 +1125,7 @@ class ObjectDetectionEvaluatorTest(tf.test.TestCase, parameterized.TestCase):
         detection_fields.detection_masks: detection_masks,
         detection_fields.num_detections: num_detections
     }
+
     groundtruth = {
         input_data_fields.groundtruth_boxes:
             groundtruth_boxes,
